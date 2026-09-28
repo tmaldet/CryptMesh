@@ -1,0 +1,1009 @@
+﻿// CryptMesh.cpp : Defines the entry point for the application.
+//
+
+#include "CryptMesh.h"
+
+using namespace std;
+
+// Clear terminal
+void clearScreen()
+{
+#ifdef _WIN32
+    system("cls");
+#else
+    system("clear");
+#endif
+}
+
+// Convert bytes to hex so encrypted data can be sent as text
+string bytesToHex(const unsigned char* data, size_t length)
+{
+    string hex;
+    hex.resize(length * 2 + 1);
+
+    sodium_bin2hex(
+        hex.data(),
+        hex.size(),
+        data,
+        length
+    );
+
+    hex.resize(length * 2);
+
+    return hex;
+}
+
+// Convert hex back into bytes
+vector<unsigned char> hexToBytes(string hex)
+{
+    vector<unsigned char> bytes(hex.length() / 2);
+
+    size_t outputLength;
+
+    if (sodium_hex2bin(
+        bytes.data(),
+        bytes.size(),
+        hex.c_str(),
+        hex.length(),
+        nullptr,
+        &outputLength,
+        nullptr
+    ) != 0)
+    {
+        return {};
+    }
+
+    bytes.resize(outputLength);
+
+    return bytes;
+}
+
+// Create encryption key from lobby password
+bool createKey(
+    string password,
+    const unsigned char salt[crypto_pwhash_SALTBYTES],
+    unsigned char key[crypto_secretbox_KEYBYTES]
+)
+{
+    if (crypto_pwhash(
+        key,
+        crypto_secretbox_KEYBYTES,
+        password.c_str(),
+        password.length(),
+        salt,
+        crypto_pwhash_OPSLIMIT_INTERACTIVE,
+        crypto_pwhash_MEMLIMIT_INTERACTIVE,
+        crypto_pwhash_ALG_DEFAULT
+    ) != 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// Encrypt a message
+string encryptMessage(
+    string message,
+    unsigned char key[crypto_secretbox_KEYBYTES]
+)
+{
+    unsigned char nonce[crypto_secretbox_NONCEBYTES];
+
+    randombytes_buf(
+        nonce,
+        sizeof nonce
+    );
+
+    vector<unsigned char> encrypted(
+        message.length() +
+        crypto_secretbox_MACBYTES
+    );
+
+    crypto_secretbox_easy(
+        encrypted.data(),
+        reinterpret_cast<const unsigned char*>(message.c_str()),
+        message.length(),
+        nonce,
+        key
+    );
+
+    string nonceHex =
+        bytesToHex(
+            nonce,
+            sizeof nonce
+        );
+
+    string messageHex =
+        bytesToHex(
+            encrypted.data(),
+            encrypted.size()
+        );
+
+    return nonceHex + ":" + messageHex;
+}
+
+// Decrypt a message
+string decryptMessage(
+    string encryptedMessage,
+    unsigned char key[crypto_secretbox_KEYBYTES]
+)
+{
+    size_t separator =
+        encryptedMessage.find(':');
+
+    if (separator == string::npos)
+    {
+        return "";
+    }
+
+    string nonceHex =
+        encryptedMessage.substr(
+            0,
+            separator
+        );
+
+    string messageHex =
+        encryptedMessage.substr(
+            separator + 1
+        );
+
+    vector<unsigned char> nonce =
+        hexToBytes(nonceHex);
+
+    vector<unsigned char> cipher =
+        hexToBytes(messageHex);
+
+    if (nonce.size() != crypto_secretbox_NONCEBYTES)
+    {
+        return "";
+    }
+
+    if (cipher.size() < crypto_secretbox_MACBYTES)
+    {
+        return "";
+    }
+
+    vector<unsigned char> decrypted(
+        cipher.size() -
+        crypto_secretbox_MACBYTES
+    );
+
+    if (crypto_secretbox_open_easy(
+        decrypted.data(),
+        cipher.data(),
+        cipher.size(),
+        nonce.data(),
+        key
+    ) != 0)
+    {
+        return "";
+    }
+
+    return string(
+        decrypted.begin(),
+        decrypted.end()
+    );
+}
+
+// Get local IP
+string getLocalIP(asio::io_context& io)
+{
+    try
+    {
+        asio::ip::udp::resolver resolver(io);
+
+        auto results =
+            resolver.resolve(
+                asio::ip::host_name(),
+                ""
+            );
+
+        for (auto& result : results)
+        {
+            auto address =
+                result.endpoint().address();
+
+            if (address.is_v4() &&
+                !address.is_loopback())
+            {
+                return address.to_string();
+            }
+        }
+    }
+    catch (...)
+    {
+    }
+
+    return "Unable to determine IP";
+}
+
+// Main menu
+void menu(char& outChoice)
+{
+    cout << "================================================================================================================" << endl;
+
+    cout << R"(
+  /$$$$$$                                  /$$     /$$      /$$                     /$$
+ /$$__  $$                                | $$    | $$$    /$$$                    | $$
+| $$  \__/  /$$$$$$  /$$   /$$  /$$$$$$  /$$$$$$  | $$$$  /$$$$  /$$$$$$   /$$$$$$$| $$$$$$$
+| $$       /$$__  $$| $$  | $$ /$$__  $$|_  $$_/  | $$ $$/$$ $$ /$$__  $$ /$$_____/| $$__  $$
+| $$      | $$  \__/| $$  | $$| $$  \ $$  | $$    | $$  $$$| $$| $$$$$$$$|  $$$$$$ | $$  \ $$
+| $$    $$| $$      | $$  | $$| $$  | $$  | $$ /$$| $$\  $ | $$| $$_____/ \____  $$| $$  | $$
+|  $$$$$$/| $$      |  $$$$$$$| $$$$$$$/  |  $$$$/| $$ \/  | $$|  $$$$$$$ /$$$$$$$/| $$  | $$
+ \______/ |__/       \____  $$| $$____/    \___/  |__/     |__/ \_______/|_______/ |__/  |__/
+                     /$$  | $$| $$
+                    |  $$$$$$/| $$
+                     \______/ |__/
+    )" << endl;
+
+    cout << "================================================================================================================" << endl;
+
+    cout << "1. Join a room" << endl;
+    cout << "2. Create a room" << endl;
+    cout << "3. Exit" << endl;
+
+    char choice = '0';
+
+    while (
+        choice != '1' &&
+        choice != '2' &&
+        choice != '3'
+        )
+    {
+        cout << ">>> ";
+        cin >> choice;
+    }
+
+    outChoice = choice;
+}
+
+// Server class
+class Server
+{
+private:
+
+    asio::io_context& io;
+
+    asio::ip::tcp::acceptor acceptor;
+
+    asio::ip::tcp::socket socket;
+
+    int port;
+
+    string roomPassword;
+
+    string username;
+
+    unsigned char salt[
+        crypto_pwhash_SALTBYTES
+    ];
+
+    unsigned char key[
+        crypto_secretbox_KEYBYTES
+    ];
+
+    mutex consoleMutex;
+
+public:
+
+    Server(
+        asio::io_context& ioContext,
+        int roomPort,
+        string password,
+        string user
+    )
+        : io(ioContext),
+        acceptor(ioContext),
+        socket(ioContext),
+        port(roomPort),
+        roomPassword(password),
+        username(user)
+    {
+        randombytes_buf(
+            salt,
+            sizeof salt
+        );
+
+        createKey(
+            roomPassword,
+            salt,
+            key
+        );
+    }
+
+    // Start room
+    bool startServer()
+    {
+        try
+        {
+            asio::ip::tcp::endpoint endpoint(
+                asio::ip::tcp::v4(),
+                port
+            );
+
+            acceptor.open(
+                endpoint.protocol()
+            );
+
+            acceptor.set_option(
+                asio::ip::tcp::acceptor::
+                reuse_address(true)
+            );
+
+            acceptor.bind(endpoint);
+
+            acceptor.listen();
+
+            clearScreen();
+
+            cout << "CryptMesh Room" << endl;
+            cout << "==============================" << endl;
+            cout << "IP:       "
+                << getLocalIP(io)
+                << endl;
+
+            cout << "Port:     "
+                << port
+                << endl;
+
+            cout << "Password: "
+                << roomPassword
+                << endl;
+
+            cout << "Username: "
+                << username
+                << endl;
+
+            cout << "==============================" << endl;
+
+            cout << "Waiting for user..." << endl;
+
+            return true;
+        }
+        catch (const exception& e)
+        {
+            cout << "Failed to create room." << endl;
+
+            cout << "Error: "
+                << e.what()
+                << endl;
+
+            return false;
+        }
+    }
+
+    // Send raw network message
+    bool sendRaw(string message)
+    {
+        try
+        {
+            message += "\n";
+
+            asio::write(
+                socket,
+                asio::buffer(message)
+            );
+
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    // Receive raw network message
+    string receiveRaw()
+    {
+        try
+        {
+            asio::streambuf buffer;
+
+            asio::read_until(
+                socket,
+                buffer,
+                '\n'
+            );
+
+            istream input(&buffer);
+
+            string message;
+
+            getline(
+                input,
+                message
+            );
+
+            return message;
+        }
+        catch (...)
+        {
+            return "";
+        }
+    }
+
+    // Send encrypted message
+    bool sendEncrypted(string message)
+    {
+        return sendRaw(
+            encryptMessage(
+                message,
+                key
+            )
+        );
+    }
+
+    // Receive encrypted message
+    string receiveEncrypted()
+    {
+        string encrypted =
+            receiveRaw();
+
+        if (encrypted.empty())
+        {
+            return "";
+        }
+
+        return decryptMessage(
+            encrypted,
+            key
+        );
+    }
+
+    // Authenticate connecting user
+    bool waitForClient()
+    {
+        try
+        {
+            acceptor.accept(socket);
+
+            // Send salt to joining user
+            sendRaw(
+                bytesToHex(
+                    salt,
+                    sizeof salt
+                )
+            );
+
+            // Send encrypted challenge
+            sendEncrypted(
+                "CRYPTMESH_AUTH"
+            );
+
+            // Client must decrypt challenge
+            string response =
+                receiveEncrypted();
+
+            if (
+                response !=
+                "CRYPTMESH_AUTH_OK"
+                )
+            {
+                cout << endl;
+                cout << "Incorrect password." << endl;
+
+                socket.close();
+
+                return false;
+            }
+
+            // Receive username encrypted
+            string clientUsername =
+                receiveEncrypted();
+
+            clearScreen();
+
+            cout << "<SYSTEM> "
+                << clientUsername
+                << " joined the room."
+                << endl;
+
+            return true;
+        }
+        catch (const exception& e)
+        {
+            cout << "Connection failed: "
+                << e.what()
+                << endl;
+
+            return false;
+        }
+    }
+
+    // Chat room
+    void runChat()
+    {
+        atomic<bool> connected = true;
+
+        // Receive messages on separate thread
+        thread receiveThread(
+            [&]()
+            {
+                while (connected)
+                {
+                    string message =
+                        receiveEncrypted();
+
+                    if (message.empty())
+                    {
+                        connected = false;
+
+                        lock_guard<mutex> lock(
+                            consoleMutex
+                        );
+
+                        cout << endl;
+
+                        cout << "<SYSTEM> User disconnected."
+                            << endl;
+
+                        break;
+                    }
+
+                    lock_guard<mutex> lock(
+                        consoleMutex
+                    );
+
+                    cout << endl;
+                    cout << message << endl;
+                    cout << ">>> " << flush;
+                }
+            }
+        );
+
+        string message;
+
+        while (connected)
+        {
+            {
+                lock_guard<mutex> lock(
+                    consoleMutex
+                );
+
+                cout << ">>> " << flush;
+            }
+
+            getline(
+                cin,
+                message
+            );
+
+            if (
+                message == "/exit"
+                )
+            {
+                connected = false;
+
+                socket.close();
+
+                break;
+            }
+
+            if (message.empty())
+            {
+                continue;
+            }
+
+            string formattedMessage =
+                "<" +
+                username +
+                "> " +
+                message;
+
+            sendEncrypted(
+                formattedMessage
+            );
+
+            lock_guard<mutex> lock(
+                consoleMutex
+            );
+
+            cout << formattedMessage
+                << endl;
+        }
+
+        if (receiveThread.joinable())
+        {
+            receiveThread.join();
+        }
+    }
+};
+
+// Client class
+class Client
+{
+private:
+
+    asio::io_context& io;
+
+    asio::ip::tcp::socket socket;
+
+    string username;
+
+    unsigned char key[
+        crypto_secretbox_KEYBYTES
+    ];
+
+    mutex consoleMutex;
+
+public:
+
+    Client(
+        asio::io_context& ioContext,
+        string user
+    )
+        : io(ioContext),
+        socket(ioContext),
+        username(user)
+    {
+    }
+
+    // Connect
+    bool connectToServer(
+        string ipAddress,
+        int port,
+        string password
+    )
+    {
+        try
+        {
+            asio::ip::tcp::endpoint endpoint(
+                asio::ip::make_address(
+                    ipAddress
+                ),
+                port
+            );
+
+            socket.connect(endpoint);
+
+            // Receive room salt
+            string saltHex =
+                receiveRaw();
+
+            vector<unsigned char> salt =
+                hexToBytes(saltHex);
+
+            if (
+                salt.size() !=
+                crypto_pwhash_SALTBYTES
+                )
+            {
+                return false;
+            }
+
+            if (!createKey(
+                password,
+                salt.data(),
+                key
+            ))
+            {
+                return false;
+            }
+
+            // Receive encrypted challenge
+            string challenge =
+                receiveEncrypted();
+
+            if (
+                challenge !=
+                "CRYPTMESH_AUTH"
+                )
+            {
+                cout << "Incorrect lobby password."
+                    << endl;
+
+                return false;
+            }
+
+            // Confirm password worked
+            sendEncrypted(
+                "CRYPTMESH_AUTH_OK"
+            );
+
+            // Send username encrypted
+            sendEncrypted(
+                username
+            );
+
+            clearScreen();
+
+            cout << "<SYSTEM> Connected to room."
+                << endl;
+
+            return true;
+        }
+        catch (const exception& e)
+        {
+            cout << "Failed to connect." << endl;
+
+            cout << "Error: "
+                << e.what()
+                << endl;
+
+            return false;
+        }
+    }
+
+    // Send raw message
+    bool sendRaw(string message)
+    {
+        try
+        {
+            message += "\n";
+
+            asio::write(
+                socket,
+                asio::buffer(message)
+            );
+
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    // Receive raw message
+    string receiveRaw()
+    {
+        try
+        {
+            asio::streambuf buffer;
+
+            asio::read_until(
+                socket,
+                buffer,
+                '\n'
+            );
+
+            istream input(&buffer);
+
+            string message;
+
+            getline(
+                input,
+                message
+            );
+
+            return message;
+        }
+        catch (...)
+        {
+            return "";
+        }
+    }
+
+    // Send encrypted
+    bool sendEncrypted(string message)
+    {
+        return sendRaw(
+            encryptMessage(
+                message,
+                key
+            )
+        );
+    }
+
+    // Receive encrypted
+    string receiveEncrypted()
+    {
+        string encrypted =
+            receiveRaw();
+
+        if (encrypted.empty())
+        {
+            return "";
+        }
+
+        return decryptMessage(
+            encrypted,
+            key
+        );
+    }
+
+    // Chat room
+    void runChat()
+    {
+        atomic<bool> connected = true;
+
+        thread receiveThread(
+            [&]()
+            {
+                while (connected)
+                {
+                    string message =
+                        receiveEncrypted();
+
+                    if (message.empty())
+                    {
+                        connected = false;
+
+                        lock_guard<mutex> lock(
+                            consoleMutex
+                        );
+
+                        cout << endl;
+
+                        cout << "<SYSTEM> Disconnected."
+                            << endl;
+
+                        break;
+                    }
+
+                    lock_guard<mutex> lock(
+                        consoleMutex
+                    );
+
+                    cout << endl;
+                    cout << message << endl;
+                    cout << ">>> " << flush;
+                }
+            }
+        );
+
+        string message;
+
+        while (connected)
+        {
+            {
+                lock_guard<mutex> lock(
+                    consoleMutex
+                );
+
+                cout << ">>> " << flush;
+            }
+
+            getline(
+                cin,
+                message
+            );
+
+            if (
+                message == "/exit"
+                )
+            {
+                connected = false;
+
+                socket.close();
+
+                break;
+            }
+
+            if (message.empty())
+            {
+                continue;
+            }
+
+            string formattedMessage =
+                "<" +
+                username +
+                "> " +
+                message;
+
+            sendEncrypted(
+                formattedMessage
+            );
+
+            lock_guard<mutex> lock(
+                consoleMutex
+            );
+
+            cout << formattedMessage
+                << endl;
+        }
+
+        if (receiveThread.joinable())
+        {
+            receiveThread.join();
+        }
+    }
+};
+
+int main()
+{
+    // Initialize libsodium
+    if (sodium_init() < 0)
+    {
+        cout << "Failed to initialize libsodium."
+            << endl;
+
+        return 1;
+    }
+
+    asio::io_context io;
+
+    char choice;
+
+    menu(choice);
+
+    // Exit
+    if (choice == '3')
+    {
+        return 0;
+    }
+
+    // Create room
+    if (choice == '2')
+    {
+        string username;
+        string password;
+
+        int port;
+
+        cout << "Create a username: ";
+        cin >> username;
+
+        cout << "Create a lobby password: ";
+        cin >> password;
+
+        cout << "Enter a port: ";
+        cin >> port;
+
+        cin.ignore(
+            numeric_limits<streamsize>::max(),
+            '\n'
+        );
+
+        Server server(
+            io,
+            port,
+            password,
+            username
+        );
+
+        if (server.startServer())
+        {
+            if (server.waitForClient())
+            {
+                server.runChat();
+            }
+        }
+    }
+
+    // Join room
+    else if (choice == '1')
+    {
+        string username;
+        string password;
+        string ipAddress;
+
+        int port;
+
+        cout << "Create a username: ";
+        cin >> username;
+
+        cout << "Enter room IP: ";
+        cin >> ipAddress;
+
+        cout << "Enter room port: ";
+        cin >> port;
+
+        cout << "Enter lobby password: ";
+        cin >> password;
+
+        cin.ignore(
+            numeric_limits<streamsize>::max(),
+            '\n'
+        );
+
+        Client client(
+            io,
+            username
+        );
+
+        if (
+            client.connectToServer(
+                ipAddress,
+                port,
+                password
+            )
+            )
+        {
+            client.runChat();
+        }
+    }
+
+    return 0;
+}
