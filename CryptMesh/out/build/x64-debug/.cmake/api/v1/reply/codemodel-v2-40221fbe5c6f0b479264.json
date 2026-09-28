@@ -1,0 +1,112 @@
+{
+	"configurations" : 
+	[
+		{
+			"abstractTargets" : 
+			[
+				{
+					"directoryIndex" : 1,
+					"id" : "Threads::Threads::@7c0bfd540ad3fc18b4b1",
+					"jsonFile" : "target-Threads__Threads-Debug-80d51039e615e123656d.json",
+					"name" : "Threads::Threads",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "asio::asio::@7c0bfd540ad3fc18b4b1",
+					"jsonFile" : "target-asio__asio-Debug-d806849118c2fc37c0a5.json",
+					"name" : "asio::asio",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "unofficial-sodium::sodium::@7c0bfd540ad3fc18b4b1",
+					"jsonFile" : "target-unofficial-sodium__sodium-Debug-2d8db461e1bad18f1529.json",
+					"name" : "unofficial-sodium::sodium",
+					"projectIndex" : 0
+				}
+			],
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"jsonFile" : "directory-.-Debug-f040eec181a89de70dbe.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"projectIndex" : 0,
+					"source" : "."
+				},
+				{
+					"abstractTargetIndexes" : 
+					[
+						0,
+						1,
+						2
+					],
+					"build" : "CryptMesh",
+					"jsonFile" : "directory-CryptMesh-Debug-82b73accc2aa394ebcaf.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "CryptMesh",
+					"targetIndexes" : 
+					[
+						0
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"abstractTargetIndexes" : 
+					[
+						0,
+						1,
+						2
+					],
+					"directoryIndexes" : 
+					[
+						0,
+						1
+					],
+					"name" : "CryptMesh",
+					"targetIndexes" : 
+					[
+						0
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 1,
+					"id" : "CryptMesh::@7c0bfd540ad3fc18b4b1",
+					"jsonFile" : "target-CryptMesh-Debug-d58ee3794cc35c361bb5.json",
+					"name" : "CryptMesh",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "C:/Users/vailp/OneDrive/Documents/GitHub/CryptMesh/CryptMesh/out/build/x64-debug",
+		"source" : "C:/Users/vailp/OneDrive/Documents/GitHub/CryptMesh/CryptMesh"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 10
+	}
+}
